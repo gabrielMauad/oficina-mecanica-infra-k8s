@@ -75,9 +75,14 @@ flowchart LR
 - Uma sessão ativa da **AWS Academy Learner Lab**, com as credenciais de sessão
   (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`) exportadas no ambiente para
   rodar `plan`/`apply` localmente
-- Um **bucket S3** (e, opcionalmente, uma tabela **DynamoDB** para lock) já existentes, criados
-  manualmente uma única vez — são pré-requisito do próprio backend, então não podem ser
-  provisionados por este Terraform (RFC-002 §6.4)
+- Um **bucket S3** já existente, criado manualmente uma única vez — é pré-requisito do próprio
+  backend, então não pode ser provisionado por este Terraform (RFC-002 §6.4). O mesmo bucket é
+  compartilhado com `oficina-mecanica-infra-db`, sob uma chave diferente.
+
+> **Sem lock de state.** Não há tabela DynamoDB para locking. Os dois repositórios de
+> infraestrutura usam chaves distintas no mesmo bucket, então não há concorrência entre eles, e o
+> `apply` é executado por uma única pessoa. Numa equipe ou com pipelines concorrentes, o lock seria
+> obrigatório — aqui ele só acrescentaria custo e uma peça a manter numa conta de crédito finito.
 
 ## Instruções de execução
 
@@ -96,8 +101,7 @@ nome de bucket commitado — os valores entram aqui):
 terraform init \
   -backend-config="bucket=<nome-do-bucket-s3>" \
   -backend-config="key=infra-k8s/terraform.tfstate" \
-  -backend-config="region=us-east-1" \
-  -backend-config="dynamodb_table=<nome-da-tabela-dynamodb>"   # opcional, lock
+  -backend-config="region=us-east-1"
 ```
 
 **`plan`/`apply`** exigem as credenciais de sessão da AWS Academy exportadas no ambiente
@@ -132,8 +136,8 @@ Workflow em [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
 - **`apply`** (push/`workflow_dispatch` na `main`, depende de `validate`): autentica com
   `aws-actions/configure-aws-credentials`, usando as **credenciais de sessão temporárias** da conta
   AWS Academy — não OIDC/IAM role, que esta conta não permite criar (ADR-006). Requer três secrets
-  do repositório, **incluindo obrigatoriamente** `AWS_SESSION_TOKEN`, e duas variáveis do
-  repositório (`vars.TF_STATE_BUCKET`, `vars.TF_STATE_LOCK_TABLE`) para o `-backend-config`. Roda
+  do repositório, **incluindo obrigatoriamente** `AWS_SESSION_TOKEN`, e a variável do repositório
+  `vars.TF_STATE_BUCKET` para o `-backend-config`. Roda
   sob o Environment `aws-academy` do GitHub — crie-o em Settings → Environments e associe os
   secrets a ele (ou aos secrets do repositório, visíveis a qualquer Environment).
 - As credenciais de sessão expiram com a sessão do laboratório: se o `apply` falhar na
