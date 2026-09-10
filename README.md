@@ -119,3 +119,4 @@ Workflow em [`.github/workflows/ci.yml`](.github/workflows/ci.yml), GitHub Actio
   repositório** — não antes, e não em dois passos separados.
 - **Ambiente de homologação**: em aberto (ver ADR-005 do repositório da aplicação) — depende do
   crédito disponível na conta de nuvem usada no projeto.
+
