@@ -3,6 +3,9 @@ name: CI
 on:
   pull_request:
     branches: [ main ]
+  push:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   validate:
@@ -27,23 +30,44 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-  # ---------------------------------------------------------------------
-  # apply:
-  #   name: Terraform Apply
-  #   runs-on: ubuntu-latest
-  #   needs: validate
-  #   if: github.ref == 'refs/heads/main'
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: hashicorp/setup-terraform@v3
-  #       with:
-  #         terraform_version: "1.15.8"
-  #     - run: terraform init
-  #     - run: terraform apply -auto-approve
-  #
-  # TODO: habilitar quando existirem (1) a decisão de nuvem (RFC-002,
-  # pendente no repositório da aplicação), (2) o backend remoto do state
-  # (bucket S3 + DynamoDB, ou equivalente do provedor escolhido) e
-  # (3) credenciais/role OIDC configuradas como secret neste repositório.
-  # Nenhuma dessas três coisas existe hoje.
-  # ---------------------------------------------------------------------
+  # -----------------------------------------------------------------------
+  # Job de apply. Só roda em push/workflow_dispatch na main (nunca em PR de
+  # fora, que não tem acesso aos secrets). Credenciais: a conta é uma AWS
+  # Academy Learner Lab, que não permite criar IAM role nem OIDC provider
+  # (ADR-006, repositório oficina-mecanica-app) — por isso usa as três
+  # credenciais de sessão temporárias como secrets, renovadas manualmente a
+  # cada sessão do laboratório, em vez de assumir um role via OIDC.
+  # -----------------------------------------------------------------------
+  apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    environment: aws-academy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=infra-k8s/terraform.tfstate" \
+            -backend-config="region=us-east-1" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false
