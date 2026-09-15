@@ -14,8 +14,9 @@
 # ser alcançável a partir das subnets privadas pela VPC Link.
 
 resource "aws_security_group" "nlb" {
-  name        = "${var.cluster_name}-nlb"
-  description = "NLB interna que expõe o NodePort da aplicação ao API Gateway via VPC Link"
+  name = "${var.cluster_name}-nlb"
+  # GroupDescription so aceita ASCII (exigencia da API da AWS) - nao reintroduzir acentos aqui.
+  description = "NLB interna que expoe o NodePort da aplicacao ao API Gateway via VPC Link"
   vpc_id      = data.aws_vpc.default.id
 
   tags = {
