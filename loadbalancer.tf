@@ -73,8 +73,12 @@ resource "aws_lb_target_group" "app" {
   target_type = "instance"
 
   health_check {
-    protocol            = "HTTP"
-    path                = "/healthz"
+    protocol = "HTTP"
+    # /healthz/live, não /healthz: é a liveness pura da aplicação (sem o check do PostgreSQL que
+    # /healthz agrega desde o PR #28) — mesma distinção já usada nas probes do Deployment
+    # (k8s/app/20-api-deployment.yaml). Um RDS fora do ar não deve tirar todos os nós do target
+    # group; quem sinaliza indisponibilidade de banco é a resposta da aplicação, não a NLB.
+    path                = "/healthz/live"
     port                = tostring(var.app_node_port)
     healthy_threshold   = 3
     unhealthy_threshold = 3

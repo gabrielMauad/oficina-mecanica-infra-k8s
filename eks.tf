@@ -16,7 +16,12 @@ resource "aws_eks_cluster" "this" {
   version  = var.kubernetes_version
 
   vpc_config {
-    subnet_ids              = local.subnet_ids
+    subnet_ids = local.subnet_ids
+    # Ambos ligados mesmo com os nós em subnet pública (network.tf): o endpoint privado não é
+    # sobre isolamento de rede aqui, é sobre caminho — com ele, kubelet/kube-proxy nos nós falam
+    # com o control plane via ENI dentro da própria VPC, sem sair pelo Internet Gateway. Não tem
+    # custo adicional (diferente de um VPC endpoint de interface comum) nem contradiz a escolha de
+    # subnet pública; endpoint_public_access continua necessário para `kubectl`/CI fora da VPC.
     endpoint_private_access = true
     endpoint_public_access  = true
   }

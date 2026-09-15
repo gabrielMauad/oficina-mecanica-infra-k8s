@@ -16,6 +16,21 @@ variable "kubernetes_version" {
   default     = "1.31"
 }
 
+variable "eks_availability_zones" {
+  description = <<-EOT
+    Allowlist de AZs cujas subnets da VPC default (network.tf) são passadas ao cluster/node
+    group/NLB/VPC Link. Não é "pegue todas as subnets da VPC default": pelo menos uma AZ comum em
+    us-east-1 (historicamente 'us-east-1e') não tem capacidade para o control plane do EKS em
+    várias contas AWS — o apply falha com UnsupportedAvailabilityZoneException só na criação do
+    cluster. Restringir também reduz custo: a NLB (loadbalancer.tf) cobra por AZ.
+
+    Se var.aws_region mudar para 'us-west-2' (a outra região permitida pela conta AWS Academy,
+    RFC-002), esta lista precisa mudar junto — os nomes de AZ são específicos da região.
+  EOT
+  type        = list(string)
+  default     = ["us-east-1a", "us-east-1b", "us-east-1c"]
+}
+
 variable "eks_cluster_role_name" {
   description = "Nome da IAM role pré-criada na conta AWS Academy usada pelo cluster e pelo node group do EKS (RFC-002 §6.1). Não é possível criar IAM roles nesta conta."
   type        = string

@@ -200,16 +200,27 @@ automaticamente na criação do cluster, e declará-los só serviria para fixar 
 falha no `apply` sem benefício neste contexto de prazo curto e conta restrita.
 
 **VPC default da conta, sem criar rede própria.** A Fase 3 exige EKS com escalabilidade; não exige
-criar VPC. A conta AWS Academy já tem uma VPC default com subnets em todas as AZs da região
-(sempre ≥ 2, o mínimo que o EKS exige), o que elimina VPC, subnets, Internet Gateway, NAT Gateway e
-route tables deste Terraform — cada um desses é custo e um ponto de falha a menos no `apply`. As
-subnets da VPC default são públicas: os nós do EKS ficam em subnet pública, com IP público
-automático, o que é o que dispensa o NAT Gateway. **Isso é uma troca deliberada de isolamento de
-rede por custo e simplicidade**, aceitável para uma demonstração acadêmica — numa conta de produção
-real, os nós ficariam em subnet privada atrás de um NAT Gateway, e a rede seria criada por este
-Terraform como antes. O que continua protegendo o tráfego são os security groups dedicados
-(`aws_security_group.nlb`, `aws_security_group.vpc_link`, e o SG do RDS em `infra-db`) — o SG
-default da VPC (que libera tudo entre seus próprios membros) nunca é usado para isso.
+criar VPC. A conta AWS Academy já tem uma VPC default com subnets em todas as AZs da região, o que
+elimina VPC, subnets, Internet Gateway, NAT Gateway e route tables deste Terraform — cada um desses
+é custo e um ponto de falha a menos no `apply`. As subnets da VPC default são públicas: os nós do
+EKS ficam em subnet pública, com IP público automático, o que é o que dispensa o NAT Gateway.
+**Isso é uma troca deliberada de isolamento de rede por custo e simplicidade**, aceitável para uma
+demonstração acadêmica — numa conta de produção real, os nós ficariam em subnet privada atrás de um
+NAT Gateway, e a rede seria criada por este Terraform como antes. O que continua protegendo o
+tráfego são os security groups dedicados (`aws_security_group.nlb`, `aws_security_group.vpc_link`,
+e o SG do RDS em `infra-db`) — o SG default da VPC (que libera tudo entre seus próprios membros)
+nunca é usado para isso.
+
+**Nem todas as subnets da VPC default são usadas — allowlist de AZs.** "Toda região AWS tem ≥ 2
+AZs" está certo quanto à quantidade, mas não quanto à elegibilidade: várias contas AWS têm pelo
+menos uma AZ sem capacidade para o control plane do EKS (o caso documentado mais comum em
+`us-east-1` é a AZ `us-east-1e`), e o erro (`UnsupportedAvailabilityZoneException`) só aparece na
+criação do cluster — `validate`/`plan` não o pegam. `var.eks_availability_zones` (`network.tf`,
+`variables.tf`) restringe explicitamente as subnets passadas ao cluster/node group/NLB/VPC Link a
+um allowlist (`us-east-1a`, `us-east-1b`, `us-east-1c` por padrão), com um `check` block que falha
+o `plan` com mensagem clara se sobrar menos de 2 AZs elegíveis, em vez de deixar o erro só aparecer
+no `apply`. Efeito colateral bom: a NLB cobra por AZ em que tem subnet — restringir a 3 em vez das
+6 da região também reduz custo.
 
 **Node group `t3.small`, não `t3.micro`/`t3.nano`.** O fator limitante não é CPU, é o limite de
 pods por nó do EKS (derivado do número de ENIs/IPs da instância): `t3.micro` suporta só 4 pods, e os
@@ -260,12 +271,15 @@ laboratório ativa, confirmar:
   autenticação do cluster.
 - **Se a versão do Kubernetes (`var.kubernetes_version`, hoje `1.31`) está disponível** na conta —
   contas Academy às vezes atrasam versões suportadas.
-- **Se a VPC default da conta tem, de fato, subnets em pelo menos 2 AZs em `us-east-1`.** É o
-  comportamento padrão de qualquer conta AWS com VPC default (uma subnet por AZ da região, e toda
-  região tem ≥ 2 AZs), mas não confirmado contra a conta real.
-- **Health check da NLB em `/healthz`** só fica saudável depois que a aplicação estiver de fato
-  implantada no cluster (pipeline de `oficina-mecanica-app`) — o `apply` deste repositório cria a
-  infraestrutura independente disso, mas o alvo só respondera 200 depois do deploy da app.
+- **Se `us-east-1a`, `us-east-1b` e `us-east-1c` (o default de `var.eks_availability_zones`) têm,
+  de fato, subnet na VPC default desta conta e suportam o control plane do EKS.** O mapeamento
+  nome-de-AZ → AZ física é randomizado por conta AWS, então o nome não garante nada sozinho — é por
+  isso que existe o `check` block em `network.tf`: ele falha o `plan` com mensagem clara se sobrar
+  menos de 2 AZs elegíveis, mas só a conta real confirma se o allowlist evita a AZ sem capacidade
+  para EKS nesta conta especificamente.
+- **Health check da NLB em `/healthz/live`** só fica saudável depois que a aplicação estiver de
+  fato implantada no cluster (pipeline de `oficina-mecanica-app`) — o `apply` deste repositório cria
+  a infraestrutura independente disso, mas o alvo só respondera 200 depois do deploy da app.
 - **Limite de 9 instâncias/32 vCPU da conta**: 2 nós `t3.small` (2 vCPU cada) ficam bem dentro do
   limite; não testado contra o painel real da conta.
 - **Se o HPA consegue de fato escalar até 5 réplicas em nós `t3.small`** sem esbarrar em memória —
