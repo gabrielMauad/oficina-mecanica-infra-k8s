@@ -32,9 +32,23 @@ variable "eks_availability_zones" {
 }
 
 variable "eks_cluster_role_name" {
-  description = "Nome da IAM role pré-criada na conta AWS Academy usada pelo cluster e pelo node group do EKS (RFC-002 §6.1). Não é possível criar IAM roles nesta conta."
+  description = <<-EOT
+    Nome da IAM role pré-criada na conta AWS Academy usada pelo cluster e pelo node group do EKS
+    (RFC-002 §6.1). Não é possível criar IAM roles nesta conta.
+
+    A lista oficial de serviços da AWS Academy indica que o EKS assume a role
+    "LabEksClusterRole created for Cluster and Node", mas essa role não existe na conta usada
+    neste projeto: o terraform plan falhou com
+    "reading IAM Role (LabEksClusterRole): couldn't find resource". A checagem com
+    `aws iam list-roles` mostrou que a única role "Lab*" disponível na conta é `LabRole` — a mesma
+    indicada na orientação em aula. O default abaixo foi ajustado para `LabRole` e validado com
+    plan e apply reais.
+
+    Numa conta AWS Academy onde `LabEksClusterRole` exista, basta sobrescrever esta variável com
+    o nome dela.
+  EOT
   type        = string
-  default     = "LabEksClusterRole"
+  default     = "LabRole"
 }
 
 variable "node_instance_types" {

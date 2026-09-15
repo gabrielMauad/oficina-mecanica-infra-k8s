@@ -12,3 +12,7 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+
+# Plan files: podem conter valores sensiveis em texto plano, nunca versionar
+tfplan
+*.tfplan

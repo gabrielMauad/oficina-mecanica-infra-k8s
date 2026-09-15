@@ -264,9 +264,11 @@ Este repositório foi validado com `terraform init -backend=false`, `terraform f
 executados nesta sessão (sem credenciais). Fica para quem rodar o primeiro `apply`, com a sessão do
 laboratório ativa, confirmar:
 
-- **Se `LabEksClusterRole` realmente serve tanto para `aws_eks_cluster.role_arn` quanto para
-  `aws_eks_node_group.node_role_arn`.** RFC-002 diz que sim ("roles pré-criadas `LabEksClusterRole`
-  para cluster e nós"), mas a policy efetiva anexada à role só é visível na conta real.
+- **Se `LabRole` (usada no lugar de `LabEksClusterRole`, que não existe nesta conta — ver
+  `variables.tf`) realmente serve tanto para `aws_eks_cluster.role_arn` quanto para
+  `aws_eks_node_group.node_role_arn`.** RFC-002 cita `LabEksClusterRole` para cluster e nós, mas
+  essa role não existe na conta usada neste projeto; a policy efetiva anexada a `LabRole` só é
+  visível na conta real.
 - **Disponibilidade do add-on gerenciado `metrics-server`** (`aws_eks_addon`) para a versão do
   cluster nesta conta/região — é um add-on relativamente recente da AWS. Se `apply` falhar nele
   especificamente, o fallback é instalar via `helm_release` (como na Fase 2, `infra/main.tf` no
