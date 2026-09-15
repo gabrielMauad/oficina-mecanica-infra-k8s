@@ -7,7 +7,7 @@
 resource "aws_security_group" "vpc_link" {
   name        = "${var.cluster_name}-vpc-link"
   description = "ENIs da VPC Link do API Gateway"
-  vpc_id      = aws_vpc.this.id
+  vpc_id      = data.aws_vpc.default.id
 
   tags = {
     Name = "${var.cluster_name}-vpc-link"
@@ -34,7 +34,7 @@ resource "aws_vpc_security_group_ingress_rule" "nlb_from_vpc_link" {
 
 resource "aws_apigatewayv2_vpc_link" "this" {
   name               = "${var.cluster_name}-vpc-link"
-  subnet_ids         = aws_subnet.private[*].id
+  subnet_ids         = local.subnet_ids
   security_group_ids = [aws_security_group.vpc_link.id]
 }
 

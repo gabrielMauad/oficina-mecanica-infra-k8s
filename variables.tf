@@ -16,22 +16,19 @@ variable "kubernetes_version" {
   default     = "1.31"
 }
 
-variable "vpc_cidr" {
-  description = "CIDR block da VPC."
-  type        = string
-  default     = "10.0.0.0/16"
-}
+variable "eks_availability_zones" {
+  description = <<-EOT
+    Allowlist de AZs cujas subnets da VPC default (network.tf) são passadas ao cluster/node
+    group/NLB/VPC Link. Não é "pegue todas as subnets da VPC default": pelo menos uma AZ comum em
+    us-east-1 (historicamente 'us-east-1e') não tem capacidade para o control plane do EKS em
+    várias contas AWS — o apply falha com UnsupportedAvailabilityZoneException só na criação do
+    cluster. Restringir também reduz custo: a NLB (loadbalancer.tf) cobra por AZ.
 
-variable "public_subnet_cidrs" {
-  description = "CIDRs das subnets públicas, uma por AZ (NAT Gateway e a NLB, se algum dia se tornar internet-facing)."
+    Se var.aws_region mudar para 'us-west-2' (a outra região permitida pela conta AWS Academy,
+    RFC-002), esta lista precisa mudar junto — os nomes de AZ são específicos da região.
+  EOT
   type        = list(string)
-  default     = ["10.0.0.0/24", "10.0.1.0/24"]
-}
-
-variable "private_subnet_cidrs" {
-  description = "CIDRs das subnets privadas, uma por AZ (node group do EKS e a NLB interna)."
-  type        = list(string)
-  default     = ["10.0.10.0/24", "10.0.11.0/24"]
+  default     = ["us-east-1a", "us-east-1b", "us-east-1c"]
 }
 
 variable "eks_cluster_role_name" {
@@ -41,9 +38,21 @@ variable "eks_cluster_role_name" {
 }
 
 variable "node_instance_types" {
-  description = "Tipos de instância do node group. Limite da conta AWS Academy: até 'large', 32 vCPU e 9 instâncias por região (RFC-002 §6.2)."
+  description = <<-EOT
+    Tipos de instância do node group. Limite da conta AWS Academy: até 'large', 32 vCPU e 9
+    instâncias por região (RFC-002 §6.2).
+
+    't3.small', não 't3.micro'/'t3.nano': o fator limitante não é CPU, é o limite de pods por nó
+    do EKS (derivado do número de ENIs/IPs da instância) — 't3.micro' suporta só 4 pods, e os pods
+    de sistema (kube-proxy, coredns, metrics-server, aws-node) já consomem isso. 't3.small' suporta
+    11; com 2 nós são ~22 slots, menos ~6 de sistema = ~16 livres, suficiente para o HPA escalar até
+    5 réplicas (k8s/app/22-api-hpa.yaml).
+
+    Se o HPA não conseguir escalar até 5 réplicas por falta de memória (não de slots de pod — é o
+    limite mais apertado aqui), o próximo degrau é 't3.medium'.
+  EOT
   type        = list(string)
-  default     = ["t3.medium"]
+  default     = ["t3.small"]
 }
 
 variable "node_group_desired_size" {
@@ -59,7 +68,7 @@ variable "node_group_min_size" {
 
 variable "node_group_max_size" {
   type    = number
-  default = 4
+  default = 3
 }
 
 variable "app_node_port" {
