@@ -36,17 +36,23 @@ Provisionar, via Terraform, tudo que fica entre a internet e a aplicação
   VPC, e a VPC default já tem subnets em todas as AZs da região.
 - **Cluster Kubernetes gerenciado**: Amazon EKS, com node group escalável (2 a 3 nós).
 - **Exposição**: NLB interna + API Gateway (HTTP API) na frente do cluster.
+- **Registro de imagens**: repositório ECR (`ecr.tf`) que substitui o Docker Hub usado na Fase 2.
+- **Segredo da aplicação**: chave JWT compartilhada com a Lambda (ADR-001) e senha do login da
+  oficina, gerados e publicados no Secrets Manager (`secrets.tf`) — nunca em texto puro no
+  repositório.
 
 O deploy da aplicação em si (imagem, ConfigMap/Secret, Deployment, HPA) continua sendo feito pela
-pipeline do repositório `oficina-mecanica-app`, contra o cluster provisionado aqui — este
-repositório não aplica manifestos Kubernetes.
+pipeline do repositório `oficina-mecanica-app`, contra o cluster e os recursos provisionados aqui —
+este repositório não aplica manifestos Kubernetes.
 
 ## Tecnologias utilizadas
 
 | Tecnologia | Uso |
 |---|---|
-| **Terraform** ≥ 1.5, provider `hashicorp/aws` ~> 5.0 | IaC de toda a infraestrutura de nuvem |
+| **Terraform** ≥ 1.5, provider `hashicorp/aws` ~> 5.0, `hashicorp/random` ~> 3.6 | IaC de toda a infraestrutura de nuvem |
 | **Amazon EKS** | Cluster Kubernetes gerenciado |
+| **Amazon ECR** | Repositório de imagens da aplicação |
+| **AWS Secrets Manager** | Segredo da aplicação (JWT + senha admin) |
 | **Amazon API Gateway (HTTP API)** | Porta de entrada única da aplicação |
 | **AWS Network Load Balancer** | Expõe o NodePort da aplicação dentro da VPC ao API Gateway |
 | **GitHub Actions** | CI de validação (PR) e apply (push/dispatch na `main`) |
@@ -169,6 +175,18 @@ distinção entre subnet pública e privada, e nada consumia esse output além d
 | `api_gateway_id` | string | `lambda-auth` | Id da HTTP API, para criar a integração/rota de autenticação por CPF nesta mesma API |
 | `api_gateway_execution_arn` | string | `lambda-auth` | Necessário para a Lambda aceitar invocações vindas deste API Gateway |
 | `api_gateway_endpoint` | string | — | URL pública de invocação da API |
+| `ecr_repository_url` | string | pipeline de `oficina-mecanica-app` | URL do repositório ECR para build/push da imagem |
+| `ecr_repository_name` | string | pipeline de `oficina-mecanica-app` | Nome do repositório ECR |
+| `app_secret_name` | string | pipeline de `oficina-mecanica-app` | **Nome** (não o ARN) do secret com `jwt_secret` e `admin_senha` |
+| `app_secret_arn` | string | — | ARN do secret da aplicação, para referência formal (ex.: policy IAM) |
+
+**As pipelines consomem `app_secret_name`, nunca `app_secret_arn`.** O nome de um secret do
+Secrets Manager (`oficina-mecanica/dev/app`) é estável entre recriações do ambiente; o ARN carrega
+um sufixo aleatório que muda a cada `destroy`/`apply`. `aws secretsmanager get-secret-value
+--secret-id oficina-mecanica/dev/app` funciona com o nome sozinho — não há motivo para a pipeline
+conhecer o ARN. O mesmo vale para o ECR: a pipeline resolve a URL do registry via
+`aws ecr describe-repositories --repository-names oficina-mecanica-api` (ou o próprio
+`amazon-ecr-login`), nunca com a conta gravada em código.
 
 ## Decisões de desenho
 
@@ -245,6 +263,8 @@ e destruir — não manter no ar entre sessões. O que cobra por hora **mesmo co
 | NLB (Network Load Balancer) | ~US$ 0,0225/h + LCU | Cobra enquanto existir, mesmo sem tráfego. |
 | Node group (2× `t3.small`) | Instâncias EC2 On-Demand | Cobra por instância, mesmo ociosa. |
 | API Gateway (HTTP API) | Por requisição | Não cobra parado, só por uso — não é uma preocupação de "esquecer ligado". |
+| Amazon ECR | ~US$ 0,10/GB/mês | Baixo; a `aws_ecr_lifecycle_policy` limita a 10 imagens para não crescer indefinidamente. |
+| Secrets Manager (`aws_secretsmanager_secret.app`) | ~US$ 0,40/mês | Baixo, mas contínuo enquanto o secret existir. `recovery_window_in_days = 0` remove o secret imediatamente no `destroy`. |
 
 **Ordem de destruição:** `oficina-mecanica-infra-db` **antes** de `oficina-mecanica-infra-k8s` — na
 ordem inversa da criação (ver "Passos de deploy"). O RDS depende da VPC/subnets/security group
