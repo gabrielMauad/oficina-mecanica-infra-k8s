@@ -16,7 +16,7 @@
 resource "aws_security_group" "nlb" {
   name        = "${var.cluster_name}-nlb"
   description = "NLB interna que expõe o NodePort da aplicação ao API Gateway via VPC Link"
-  vpc_id      = aws_vpc.this.id
+  vpc_id      = data.aws_vpc.default.id
 
   tags = {
     Name = "${var.cluster_name}-nlb"
@@ -26,7 +26,7 @@ resource "aws_security_group" "nlb" {
 resource "aws_vpc_security_group_ingress_rule" "nlb_from_vpc" {
   security_group_id = aws_security_group.nlb.id
   description       = "Trafego HTTP de dentro da VPC (VPC Link do API Gateway)"
-  cidr_ipv4         = aws_vpc.this.cidr_block
+  cidr_ipv4         = data.aws_vpc.default.cidr_block
   from_port         = 80
   to_port           = 80
   ip_protocol       = "tcp"
@@ -35,7 +35,7 @@ resource "aws_vpc_security_group_ingress_rule" "nlb_from_vpc" {
 resource "aws_vpc_security_group_egress_rule" "nlb_to_nodeport" {
   security_group_id = aws_security_group.nlb.id
   description       = "Saida para o NodePort dos nos do EKS"
-  cidr_ipv4         = aws_vpc.this.cidr_block
+  cidr_ipv4         = data.aws_vpc.default.cidr_block
   from_port         = var.app_node_port
   to_port           = var.app_node_port
   ip_protocol       = "tcp"
@@ -57,7 +57,7 @@ resource "aws_lb" "app" {
   name               = "${var.cluster_name}-nlb"
   internal           = true
   load_balancer_type = "network"
-  subnets            = aws_subnet.private[*].id
+  subnets            = local.subnet_ids
   security_groups    = [aws_security_group.nlb.id]
 
   tags = {
@@ -69,7 +69,7 @@ resource "aws_lb_target_group" "app" {
   name        = "${var.cluster_name}-app"
   port        = var.app_node_port
   protocol    = "TCP"
-  vpc_id      = aws_vpc.this.id
+  vpc_id      = data.aws_vpc.default.id
   target_type = "instance"
 
   health_check {

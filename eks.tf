@@ -16,7 +16,7 @@ resource "aws_eks_cluster" "this" {
   version  = var.kubernetes_version
 
   vpc_config {
-    subnet_ids              = concat(aws_subnet.public[*].id, aws_subnet.private[*].id)
+    subnet_ids              = local.subnet_ids
     endpoint_private_access = true
     endpoint_public_access  = true
   }
@@ -26,7 +26,7 @@ resource "aws_eks_node_group" "this" {
   cluster_name    = aws_eks_cluster.this.name
   node_group_name = "${var.cluster_name}-nodes"
   node_role_arn   = data.aws_iam_role.eks.arn
-  subnet_ids      = aws_subnet.private[*].id
+  subnet_ids      = local.subnet_ids
   instance_types  = var.node_instance_types
 
   scaling_config {
@@ -44,39 +44,17 @@ resource "aws_eks_node_group" "this" {
   depends_on = [aws_eks_cluster.this]
 }
 
-# Add-ons geridos pela AWS. metrics-server é o pré-requisito do HPA já usado em k8s/app/22-api-hpa.yaml
-# (repositório oficina-mecanica-app); vpc-cni, kube-proxy e coredns são declarados explicitamente
-# para fixar versão em vez de depender da versão self-managed default do EKS.
+# metrics-server é o único add-on declarado: é pré-requisito do HPA já usado em
+# k8s/app/22-api-hpa.yaml (repositório oficina-mecanica-app), e o HPA é requisito da fase
+# (escalabilidade). vpc-cni, kube-proxy e coredns NÃO são declarados aqui — o EKS já os instala
+# automaticamente na criação do cluster; fixá-los via aws_eks_addon só serve para travar versão,
+# o que aqui é apenas mais três pontos de falha no apply sem benefício.
 #
 # NÃO VALIDADO SEM APPLY: "metrics-server" como aws_eks_addon é um add-on gerenciado relativamente
 # recente da AWS; confirmar no primeiro apply que ele está disponível para a versão do cluster
 # nesta conta/região. Se não estiver, o fallback é o helm_release usado na Fase 2 (infra/main.tf
 # no repositório da aplicação), que exige configurar o provider kubernetes/helm com as credenciais
 # do cluster.
-resource "aws_eks_addon" "vpc_cni" {
-  cluster_name                = aws_eks_cluster.this.name
-  addon_name                  = "vpc-cni"
-  resolve_conflicts_on_create = "OVERWRITE"
-  resolve_conflicts_on_update = "OVERWRITE"
-}
-
-resource "aws_eks_addon" "kube_proxy" {
-  cluster_name                = aws_eks_cluster.this.name
-  addon_name                  = "kube-proxy"
-  resolve_conflicts_on_create = "OVERWRITE"
-  resolve_conflicts_on_update = "OVERWRITE"
-}
-
-resource "aws_eks_addon" "coredns" {
-  cluster_name                = aws_eks_cluster.this.name
-  addon_name                  = "coredns"
-  resolve_conflicts_on_create = "OVERWRITE"
-  resolve_conflicts_on_update = "OVERWRITE"
-
-  # coredns roda em pods, que só existem depois do node group
-  depends_on = [aws_eks_node_group.this]
-}
-
 resource "aws_eks_addon" "metrics_server" {
   cluster_name                = aws_eks_cluster.this.name
   addon_name                  = "metrics-server"

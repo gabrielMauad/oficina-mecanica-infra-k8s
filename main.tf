@@ -6,8 +6,8 @@
 #   backend.tf      - configuração parcial do backend remoto (S3)
 #   providers.tf     - provider AWS
 #   variables.tf     - inputs
-#   network.tf       - VPC, subnets públicas/privadas, IGW, NAT
-#   eks.tf           - cluster EKS, node group e add-ons (roles pré-criadas da Academy)
+#   network.tf       - data sources da VPC default da conta e suas subnets (nenhuma rede é criada)
+#   eks.tf           - cluster EKS, node group e o add-on metrics-server (roles pré-criadas da Academy)
 #   loadbalancer.tf  - NLB interna + target group (NodePort) que expõe a aplicação na VPC
 #   apigateway.tf    - HTTP API + VPC Link, integrando o API Gateway à NLB
 #   outputs.tf       - contrato consumido pelos demais repositórios

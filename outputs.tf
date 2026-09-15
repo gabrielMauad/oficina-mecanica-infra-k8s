@@ -4,18 +4,17 @@
 # lá em paralelo.
 
 output "vpc_id" {
-  description = "Id da VPC. Consumido por oficina-mecanica-infra-db para o RDS."
-  value       = aws_vpc.this.id
+  description = "Id da VPC default da conta. Consumido por oficina-mecanica-infra-db para o RDS."
+  value       = data.aws_vpc.default.id
 }
 
 output "private_subnet_ids" {
-  description = "Ids das subnets privadas. Consumido por oficina-mecanica-infra-db para o DB subnet group do RDS."
-  value       = aws_subnet.private[*].id
-}
-
-output "public_subnet_ids" {
-  description = "Ids das subnets públicas."
-  value       = aws_subnet.public[*].id
+  description = <<-EOT
+    Ids das subnets da VPC default usadas pelo cluster/NLB/VPC Link. Nome mantido por
+    compatibilidade com o contrato de oficina-mecanica-infra-db (DB subnet group do RDS), mas
+    desde a adoção da VPC default (ver README) estas subnets são públicas, não privadas.
+  EOT
+  value       = local.subnet_ids
 }
 
 output "cluster_security_group_id" {
