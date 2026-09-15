@@ -61,3 +61,27 @@ output "api_gateway_endpoint" {
   description = "URL pública de invocação da API (stage $default) — entrada única da aplicação."
   value       = aws_apigatewayv2_stage.default.invoke_url
 }
+
+output "ecr_repository_url" {
+  description = "URL do repositório ECR (registry/repositório) para a pipeline de oficina-mecanica-app fazer build e push da imagem."
+  value       = aws_ecr_repository.app.repository_url
+}
+
+output "ecr_repository_name" {
+  description = "Nome do repositório ECR — usado por aws ecr get-login-password / describe-repositories para resolver a URL sem hardcode de conta."
+  value       = aws_ecr_repository.app.name
+}
+
+output "app_secret_name" {
+  description = <<-EOT
+    Nome (não o ARN) do secret com os segredos da aplicação (jwt_secret, admin_senha). As
+    pipelines lêem por NOME — aws secretsmanager get-secret-value --secret-id <nome> —, nunca pelo
+    ARN: o nome é estável entre recriações do ambiente, o ARN não é.
+  EOT
+  value       = aws_secretsmanager_secret.app.name
+}
+
+output "app_secret_arn" {
+  description = "ARN do secret da aplicação. Exposto para quem precisar de referência formal (ex.: policy IAM); as pipelines usam app_secret_name, não este valor."
+  value       = aws_secretsmanager_secret.app.arn
+}

@@ -10,6 +10,8 @@
 #   eks.tf           - cluster EKS, node group e o add-on metrics-server (roles pré-criadas da Academy)
 #   loadbalancer.tf  - NLB interna + target group (NodePort) que expõe a aplicação na VPC
 #   apigateway.tf    - HTTP API + VPC Link, integrando o API Gateway à NLB
+#   ecr.tf           - repositório de imagens da aplicação (ECR)
+#   secrets.tf       - segredo da aplicação no Secrets Manager (JWT compartilhado + senha admin)
 #   outputs.tf       - contrato consumido pelos demais repositórios
 
 terraform {
