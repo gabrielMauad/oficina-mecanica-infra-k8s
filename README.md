@@ -251,6 +251,12 @@ capacidade para a aplicação. `t3.small` suporta 11; com 2 nós são ~22 slots,
 conseguir chegar a 5 réplicas por falta de **memória** (limite mais apertado que os slots de pod
 aqui), o próximo degrau é `t3.medium` (ver `variables.tf`).
 
+**Sem Dockerfile.** A orientação oficial da fase é incluir `Dockerfile` só onde for tecnicamente
+necessário; este repositório é só Terraform — provisiona o cluster, a rede, o API Gateway e o
+repositório ECR, mas não empacota nem builda imagem própria nenhuma. A imagem da aplicação é
+construída e publicada pela pipeline de `oficina-mecanica-app` contra o ECR provisionado aqui.
+Decisão, não esquecimento.
+
 ## Custo estimado e ordem de destruição
 
 O ambiente é efêmero (RFC-002 §6.3): o ciclo esperado é provisionar, validar/gravar a demonstração
