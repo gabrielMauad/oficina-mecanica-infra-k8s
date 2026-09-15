@@ -45,10 +45,7 @@ locals {
   subnet_ids = [for s in local.eligible_subnets : s.id]
 }
 
-# Falha rápido e com mensagem clara em vez de deixar o erro aparecer só na criação do cluster EKS.
-check "eks_requires_multiple_azs" {
-  assert {
-    condition     = length(distinct([for s in local.eligible_subnets : s.availability_zone])) >= 2
-    error_message = "Menos de 2 AZs elegíveis em var.eks_availability_zones têm subnet na VPC default desta conta/região. Ajuste a variável (ver variables.tf) para AZs que existam aqui."
-  }
-}
+# A validação de que sobram >= 2 AZs elegíveis fica como lifecycle.precondition em
+# aws_eks_cluster.this (eks.tf), não como `check` block: `check` só produz warning — não bloqueia
+# plan nem apply — e roda depois do Terraform já ter tentado provisionar. `precondition` é avaliado
+# antes de criar o recurso e falha o plan de verdade.

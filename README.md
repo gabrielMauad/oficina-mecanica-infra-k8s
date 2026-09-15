@@ -217,10 +217,13 @@ menos uma AZ sem capacidade para o control plane do EKS (o caso documentado mais
 `us-east-1` é a AZ `us-east-1e`), e o erro (`UnsupportedAvailabilityZoneException`) só aparece na
 criação do cluster — `validate`/`plan` não o pegam. `var.eks_availability_zones` (`network.tf`,
 `variables.tf`) restringe explicitamente as subnets passadas ao cluster/node group/NLB/VPC Link a
-um allowlist (`us-east-1a`, `us-east-1b`, `us-east-1c` por padrão), com um `check` block que falha
-o `plan` com mensagem clara se sobrar menos de 2 AZs elegíveis, em vez de deixar o erro só aparecer
-no `apply`. Efeito colateral bom: a NLB cobra por AZ em que tem subnet — restringir a 3 em vez das
-6 da região também reduz custo.
+um allowlist (`us-east-1a`, `us-east-1b`, `us-east-1c` por padrão), com um `lifecycle.precondition`
+em `aws_eks_cluster.this` (`eks.tf`) que falha o `plan` com mensagem clara se sobrar menos de 2 AZs
+elegíveis, em vez de deixar o erro só aparecer no `apply`. É `precondition`, não um `check` block:
+`check` só produz warning e roda depois do Terraform já ter tentado provisionar — não bloqueia
+nada; `precondition` é avaliado antes de criar o recurso e falha o `plan` de verdade. Efeito
+colateral bom: a NLB cobra por AZ em que tem subnet — restringir a 3 em vez das 6 da região também
+reduz custo.
 
 **Node group `t3.small`, não `t3.micro`/`t3.nano`.** O fator limitante não é CPU, é o limite de
 pods por nó do EKS (derivado do número de ENIs/IPs da instância): `t3.micro` suporta só 4 pods, e os
@@ -274,8 +277,9 @@ laboratório ativa, confirmar:
 - **Se `us-east-1a`, `us-east-1b` e `us-east-1c` (o default de `var.eks_availability_zones`) têm,
   de fato, subnet na VPC default desta conta e suportam o control plane do EKS.** O mapeamento
   nome-de-AZ → AZ física é randomizado por conta AWS, então o nome não garante nada sozinho — é por
-  isso que existe o `check` block em `network.tf`: ele falha o `plan` com mensagem clara se sobrar
-  menos de 2 AZs elegíveis, mas só a conta real confirma se o allowlist evita a AZ sem capacidade
+  isso que existe o `lifecycle.precondition` em `aws_eks_cluster.this` (`eks.tf`): ele falha o
+  `plan` com mensagem clara se sobrar menos de 2 AZs elegíveis, mas só a conta real confirma se o
+  allowlist evita a AZ sem capacidade
   para EKS nesta conta especificamente.
 - **Health check da NLB em `/healthz/live`** só fica saudável depois que a aplicação estiver de
   fato implantada no cluster (pipeline de `oficina-mecanica-app`) — o `apply` deste repositório cria

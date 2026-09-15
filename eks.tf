@@ -25,6 +25,17 @@ resource "aws_eks_cluster" "this" {
     endpoint_private_access = true
     endpoint_public_access  = true
   }
+
+  # Falha o plan, não o apply, se o allowlist de var.eks_availability_zones (network.tf) não
+  # deixar pelo menos 2 AZs elegíveis na VPC default desta conta/região — precondition é avaliada
+  # antes de criar o recurso, ao contrário de um `check` block (que só produz warning, não bloqueia
+  # nada, e roda depois do Terraform já ter tentado provisionar).
+  lifecycle {
+    precondition {
+      condition     = length(distinct([for s in local.eligible_subnets : s.availability_zone])) >= 2
+      error_message = "Menos de 2 AZs elegíveis em var.eks_availability_zones têm subnet na VPC default desta conta/região. Ajuste a variável (ver variables.tf) para AZs que existam aqui."
+    }
+  }
 }
 
 resource "aws_eks_node_group" "this" {
