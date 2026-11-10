@@ -38,7 +38,7 @@ output "cluster_certificate_authority_data" {
 }
 
 output "app_load_balancer_arn" {
-  description = "ARN da NLB interna que expõe o NodePort da aplicação."
+  description = "ARN da NLB interna que expõe os NodePorts dos serviços (um listener por serviço)."
   value       = aws_lb.app.arn
 }
 
@@ -58,23 +58,29 @@ output "api_gateway_execution_arn" {
 }
 
 output "api_gateway_endpoint" {
-  description = "URL pública de invocação da API (stage $default) — entrada única da aplicação."
+  description = "URL pública de invocação da API (stage $default) — entrada única dos serviços."
   value       = aws_apigatewayv2_stage.default.invoke_url
 }
 
-output "ecr_repository_url" {
-  description = "URL do repositório ECR (registry/repositório) para a pipeline de oficina-mecanica-app fazer build e push da imagem."
-  value       = aws_ecr_repository.app.repository_url
+output "ecr_repository_urls" {
+  description = "Mapa serviço -> URL do repositório ECR (registry/repositório) para a pipeline de cada serviço fazer build e push da imagem."
+  value       = { for servico, repo in aws_ecr_repository.servico : servico => repo.repository_url }
 }
 
-output "ecr_repository_name" {
-  description = "Nome do repositório ECR — usado por aws ecr get-login-password / describe-repositories para resolver a URL sem hardcode de conta."
-  value       = aws_ecr_repository.app.name
+output "ecr_repository_names" {
+  description = "Mapa serviço -> nome do repositório ECR (oficina-mecanica-<serviço>) — usado por aws ecr get-login-password / describe-repositories para resolver a URL sem hardcode de conta."
+  value       = { for servico, repo in aws_ecr_repository.servico : servico => repo.name }
+}
+
+output "service_listener_ports" {
+  description = "Mapa serviço -> porta do listener TCP na NLB interna (igual ao NodePort do Service). Ex.: a Lambda de autenticação chama o cadastro em http://<app_load_balancer_dns_name>:<porta de cadastro>."
+  value       = { for servico, listener in aws_lb_listener.servico : servico => listener.port }
 }
 
 output "app_secret_name" {
   description = <<-EOT
-    Nome (não o ARN) do secret com os segredos da aplicação (jwt_secret, admin_senha). As
+    Nome (não o ARN) do secret com os segredos da aplicação (jwt_secret, admin_senha,
+    mercadopago_client_id, mercadopago_client_secret). As
     pipelines lêem por NOME — aws secretsmanager get-secret-value --secret-id <nome> —, nunca pelo
     ARN: o nome é estável entre recriações do ambiente, o ARN não é.
   EOT

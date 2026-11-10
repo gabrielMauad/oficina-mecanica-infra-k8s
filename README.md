@@ -29,20 +29,20 @@ no repositório [`oficina-mecanica-app`](https://github.com/gabrielMauad/oficina
 
 ## Propósito
 
-Provisionar, via Terraform, tudo que fica entre a internet e a aplicação
-(`oficina-mecanica-app`) rodando em contêiner:
+Provisionar, via Terraform, tudo que fica entre a internet e os cinco serviços
+(`ordens-servico`, `autenticacao`, `cadastro`, `pecas-insumos` e `pagamento`) rodando em contêiner:
 
 - **Rede**: nenhuma. Usa a VPC default da conta (data sources) — a fase exige EKS, não exige criar
   VPC, e a VPC default já tem subnets em todas as AZs da região.
-- **Cluster Kubernetes gerenciado**: Amazon EKS, com node group escalável (2 a 3 nós).
-- **Exposição**: NLB interna + API Gateway (HTTP API) na frente do cluster.
-- **Registro de imagens**: repositório ECR (`ecr.tf`) que substitui o Docker Hub usado na Fase 2.
-- **Segredo da aplicação**: chave JWT compartilhada com a Lambda (ADR-001) e senha do login da
-  oficina, gerados e publicados no Secrets Manager (`secrets.tf`) — nunca em texto puro no
+- **Cluster Kubernetes gerenciado**: Amazon EKS, com node group escalável (2 a 4 nós `t3.medium`), compartilhado pelos cinco serviços.
+- **Exposição**: NLB interna (um listener por serviço) + API Gateway (HTTP API) na frente do cluster.
+- **Registro de imagens**: um repositório ECR por serviço (`ecr.tf`), `oficina-mecanica-<serviço>`.
+- **Segredo da aplicação**: chave JWT compartilhada com a Lambda (ADR-001), senha do login da
+  oficina e credenciais do mock do Mercado Pago, geradas e publicadas no Secrets Manager (`secrets.tf`) — nunca em texto puro no
   repositório.
 
 O deploy da aplicação em si (imagem, ConfigMap/Secret, Deployment, HPA) continua sendo feito pela
-pipeline do repositório `oficina-mecanica-app`, contra o cluster e os recursos provisionados aqui —
+pipeline de cada repositório de serviço, contra o cluster e os recursos provisionados aqui —
 este repositório não aplica manifestos Kubernetes.
 
 ## Tecnologias utilizadas
@@ -51,29 +51,67 @@ este repositório não aplica manifestos Kubernetes.
 |---|---|
 | **Terraform** ≥ 1.5, provider `hashicorp/aws` ~> 5.0, `hashicorp/random` ~> 3.6 | IaC de toda a infraestrutura de nuvem |
 | **Amazon EKS** | Cluster Kubernetes gerenciado |
-| **Amazon ECR** | Repositório de imagens da aplicação |
-| **AWS Secrets Manager** | Segredo da aplicação (JWT + senha admin) |
-| **Amazon API Gateway (HTTP API)** | Porta de entrada única da aplicação |
-| **AWS Network Load Balancer** | Expõe o NodePort da aplicação dentro da VPC ao API Gateway |
+| **Amazon ECR** | Um repositório de imagens por serviço |
+| **AWS Secrets Manager** | Segredo da aplicação (JWT, senha admin, credenciais do mock do Mercado Pago) |
+| **Amazon API Gateway (HTTP API)** | Porta de entrada única dos serviços |
+| **AWS Network Load Balancer** | Expõe o NodePort de cada serviço dentro da VPC (um listener por serviço) |
 | **GitHub Actions** | CI de validação (PR) e apply (push/dispatch na `main`) |
+
+## Serviços (`var.servicos`)
+
+Fonte única, em `variables.tf`, da qual derivam via `for_each` o ECR, o listener e o target group da
+NLB, as integrações e as rotas do API Gateway e as regras de security group. Para acrescentar um
+serviço basta uma entrada no mapa (e, se tiver rotas de negócio, em `local.rotas_negocio`, em
+`apigateway.tf`).
+
+| Serviço | NodePort = porta do listener na NLB | Repositório ECR |
+|---|---|---|
+| `ordens-servico` | 30080 | `oficina-mecanica-ordens-servico` |
+| `autenticacao` | 30081 | `oficina-mecanica-autenticacao` |
+| `cadastro` | 30082 | `oficina-mecanica-cadastro` |
+| `pecas-insumos` | 30083 | `oficina-mecanica-pecas-insumos` |
+| `pagamento` | 30084 | `oficina-mecanica-pagamento` |
+
+## Rotas do API Gateway
+
+HTTP API `oficina-mecanica-api`. Cada rota usa uma integração `HTTP_PROXY` via VPC Link para o
+listener do serviço dono.
+
+**Rotas de negócio** (o caminho chega ao pod sem reescrita):
+
+| Serviço | Rotas |
+|---|---|
+| `autenticacao` | `ANY /api/v1/auth/{proxy+}` |
+| `cadastro` | `ANY /api/v1/clientes`, `ANY /api/v1/clientes/{proxy+}`, `ANY /api/v1/veiculos`, `ANY /api/v1/veiculos/{proxy+}`, `ANY /api/v1/servicos`, `ANY /api/v1/servicos/{proxy+}` |
+| `pecas-insumos` | `ANY /api/v1/pecas-insumos`, `ANY /api/v1/pecas-insumos/{proxy+}` |
+| `ordens-servico` | `ANY /api/v1/ordens-servico`, `ANY /api/v1/ordens-servico/{proxy+}` e a rota padrão `ANY /{proxy+}` |
+| `pagamento` | `ANY /api/v1/pagamentos/{proxy+}` |
+| Lambda de autenticação | `POST /auth/cpf` — criada por `oficina-mecanica-lambda-auth`, não aqui |
+
+**Rotas técnicas**, uma por serviço, com reescrita de caminho: `ANY /<serviço>/{proxy+}` usa uma
+segunda integração com `request_parameters = { "overwrite:path" = "/$request.path.proxy" }`, de modo
+que `GET /cadastro/healthz/ready` chegue ao pod como `GET /healthz/ready`. Servem aos smoke tests das
+pipelines e ao acesso ao `/openapi/v1.json` de cada serviço. As rotas `/mock/mercadopago/*` do
+serviço de pagamento **não** são expostas.
 
 ## Diagrama do componente
 
 ```mermaid
 flowchart LR
     Client[Cliente / App externo] -->|HTTPS| GW[API Gateway HTTP API]
-    GW -->|CPF: rota de auth| LAMBDA["Lambda de autenticação<br/>oficina-mecanica-lambda-auth<br/>(integra a própria rota nesta API)"]
+    GW -->|POST /auth/cpf| LAMBDA["Lambda de autenticação<br/>oficina-mecanica-lambda-auth<br/>(integra a própria rota nesta API)"]
     GW -->|demais rotas, via VPC Link| VPCLINK[VPC Link]
+    LAMBDA -.cadastro, porta 30082.-> NLB
 
     subgraph VPC["VPC default da conta (subnets públicas, sem NAT)"]
-        VPCLINK --> NLB["NLB interna<br/>target group: instance / NodePort 30080"]
+        VPCLINK --> NLB["NLB interna<br/>um listener TCP por serviço<br/>30080-30084 (= NodePort)"]
         subgraph EKS["Cluster EKS"]
-            NG["Node group (2-3 nós, t3.small)"]
+            NG["Node group (2-4 nós, t3.medium)"]
             NLB --> NG
-            NG --> PODS["Pods oficina-api<br/>(deploy: oficina-mecanica-app)"]
-            HPA["HPA (1-5 pods, 50% CPU)"] -.escala.-> PODS
+            NG --> PODS["Pods dos 5 serviços<br/>(deploy: repositório de cada serviço)"]
+            HPA["HPA por serviço (1-3 pods, 50% CPU)"] -.escala.-> PODS
         end
-        NG -.libera 5432 a partir do<br/>cluster_security_group_id.-> RDS[("RDS PostgreSQL<br/>oficina-mecanica-infra-db")]
+        NG -.libera o acesso ao PostgreSQL a partir do<br/>cluster_security_group_id.-> RDS[("RDS PostgreSQL<br/>oficina-mecanica-infra-db")]
     end
 ```
 
@@ -127,8 +165,8 @@ terraform apply
 2. Merge em `main`.
 3. Job `apply` do workflow (push na `main` ou `workflow_dispatch`) provisiona a infraestrutura
    contra o backend remoto de state.
-4. Com o cluster no ar, a pipeline de `oficina-mecanica-app` faz o deploy da aplicação (imagem +
-   manifestos `k8s/`) contra este cluster.
+4. Com o cluster no ar, a pipeline de cada serviço faz o deploy (imagem no ECR do serviço +
+   manifestos `k8s/` do próprio repositório) contra este cluster.
 5. `oficina-mecanica-infra-db` e `oficina-mecanica-lambda-auth` consomem os outputs deste
    repositório via `terraform_remote_state` (ver [Contrato de outputs](#contrato-de-outputs)).
 
@@ -171,13 +209,14 @@ distinção entre subnet pública e privada, e nada consumia esse output além d
 | `cluster_name` | string | — | Nome do cluster EKS |
 | `cluster_endpoint` | string | — | Endpoint da API do Kubernetes |
 | `cluster_certificate_authority_data` | string | — | CA do cluster, para montar o kubeconfig |
-| `app_load_balancer_arn` / `app_load_balancer_dns_name` | string | — | NLB interna que expõe o NodePort da aplicação |
+| `app_load_balancer_arn` / `app_load_balancer_dns_name` | string | `lambda-auth` (DNS) | NLB interna dos serviços; a Lambda chama o cadastro em `http://<dns>:30082` |
+| `service_listener_ports` | map(number) | — | Serviço → porta do listener na NLB (= NodePort) |
 | `api_gateway_id` | string | `lambda-auth` | Id da HTTP API, para criar a integração/rota de autenticação por CPF nesta mesma API |
 | `api_gateway_execution_arn` | string | `lambda-auth` | Necessário para a Lambda aceitar invocações vindas deste API Gateway |
 | `api_gateway_endpoint` | string | — | URL pública de invocação da API |
-| `ecr_repository_url` | string | pipeline de `oficina-mecanica-app` | URL do repositório ECR para build/push da imagem |
-| `ecr_repository_name` | string | pipeline de `oficina-mecanica-app` | Nome do repositório ECR |
-| `app_secret_name` | string | pipeline de `oficina-mecanica-app` | **Nome** (não o ARN) do secret com `jwt_secret` e `admin_senha` |
+| `ecr_repository_urls` | map(string) | pipeline de cada serviço | Serviço → URL do repositório ECR para build/push da imagem |
+| `ecr_repository_names` | map(string) | pipeline de cada serviço | Serviço → nome do repositório ECR (`oficina-mecanica-<serviço>`) |
+| `app_secret_name` | string | pipelines dos serviços | **Nome** (não o ARN) do secret com `jwt_secret`, `admin_senha`, `mercadopago_client_id` e `mercadopago_client_secret` |
 | `app_secret_arn` | string | — | ARN do secret da aplicação, para referência formal (ex.: policy IAM) |
 
 **As pipelines consomem `app_secret_name`, nunca `app_secret_arn`.** O nome de um secret do
@@ -185,7 +224,7 @@ Secrets Manager (`oficina-mecanica/dev/app`) é estável entre recriações do a
 um sufixo aleatório que muda a cada `destroy`/`apply`. `aws secretsmanager get-secret-value
 --secret-id oficina-mecanica/dev/app` funciona com o nome sozinho — não há motivo para a pipeline
 conhecer o ARN. O mesmo vale para o ECR: a pipeline resolve a URL do registry via
-`aws ecr describe-repositories --repository-names oficina-mecanica-api` (ou o próprio
+`aws ecr describe-repositories --repository-names oficina-mecanica-<serviço>` (ou o próprio
 `amazon-ecr-login`), nunca com a conta gravada em código.
 
 ## Decisões de desenho
@@ -203,11 +242,15 @@ Balancer Controller + Ingress.** O AWS Load Balancer Controller normalmente exig
 IRSA (o próprio controller precisa de permissões de EC2/ELB não cobertas pela role dos nós) — o que
 esta conta não permite criar, então essa alternativa foi descartada antes mesmo de ser tentada, não
 por preferência de estilo. A NLB é criada e gerenciada por este Terraform (não pelo Kubernetes):
-o alvo é o Auto Scaling Group do node group (`aws_autoscaling_attachment`), no NodePort 30080 já
-usado pelo Service da aplicação hoje. Isso evita a dependência circular de uma NLB criada
+o alvo é o Auto Scaling Group do node group (`aws_autoscaling_attachment`, um por target group), um
+listener TCP por serviço na mesma porta do NodePort (30080-30084, `var.servicos`) já usado pelo
+Service de cada serviço. Isso evita a dependência circular de uma NLB criada
 dinamicamente por um `Service type=LoadBalancer` (cujo ARN só existiria depois do primeiro deploy
-da aplicação, numa pipeline diferente) e **não exige nenhuma mudança no repositório da
-aplicação** — o Service continua `NodePort`. É o caminho mais simples que funciona.
+dos serviços, em pipelines diferentes) e **não exige nenhuma mudança nos repositórios dos
+serviços** — os Services continuam `NodePort`. As regras de security group usam a faixa
+`30080-30084` (menor e maior NodePort do mapa), e a entrada da NLB a partir do CIDR da VPC cobre a
+Lambda de autenticação por CPF, que roda na VPC e chama o cadastro direto na NLB (porta 30082).
+É o caminho mais simples que funciona.
 
 **Só o add-on `metrics-server` é declarado (`aws_eks_addon`), não Helm.** É pré-requisito do HPA
 (escalabilidade é requisito da fase). Declará-lo evita configurar os providers `kubernetes`/`helm`
@@ -215,7 +258,7 @@ com autenticação do cluster só para isso — o que, além de mais uma peça, 
 ordem delicada (o provider precisa que o cluster já exista para autenticar, no mesmo apply que o
 cria). `vpc-cni`, `kube-proxy` e `coredns` **não** são declarados: o EKS já os instala
 automaticamente na criação do cluster, e declará-los só serviria para fixar versão — três pontos de
-falha no `apply` sem benefício neste contexto de prazo curto e conta restrita.
+falha no `apply` sem benefício neste contexto de conta restrita.
 
 **VPC default da conta, sem criar rede própria.** A Fase 3 exige EKS com escalabilidade; não exige
 criar VPC. A conta AWS Academy já tem uma VPC default com subnets em todas as AZs da região, o que
@@ -243,18 +286,18 @@ nada; `precondition` é avaliado antes de criar o recurso e falha o `plan` de ve
 colateral bom: a NLB cobra por AZ em que tem subnet — restringir a 3 em vez das 6 da região também
 reduz custo.
 
-**Node group `t3.small`, não `t3.micro`/`t3.nano`.** O fator limitante não é CPU, é o limite de
-pods por nó do EKS (derivado do número de ENIs/IPs da instância): `t3.micro` suporta só 4 pods, e os
-pods de sistema (kube-proxy, coredns, metrics-server, aws-node) já consomem isso, sem sobrar
-capacidade para a aplicação. `t3.small` suporta 11; com 2 nós são ~22 slots, menos ~6 de sistema =
-~16 livres, suficiente para o HPA escalar até 5 réplicas (`k8s/app/22-api-hpa.yaml`). Se o HPA não
-conseguir chegar a 5 réplicas por falta de **memória** (limite mais apertado que os slots de pod
-aqui), o próximo degrau é `t3.medium` (ver `variables.tf`).
+**Node group `t3.medium`.** O fator limitante é o limite de pods por nó do EKS (derivado do número
+de ENIs/IPs da instância) e a memória: `t3.micro` suporta só 4 pods e `t3.small` 11, `t3.medium` 17.
+Com 3 nós são 51 slots, menos os pods de sistema (`aws-node` e `kube-proxy` em cada nó, `coredns`,
+`metrics-server`) e os do `nri-bundle` (New Relic) — sobram bem mais que os 15 pods dos 5 serviços
+no pico (HPA com máximo de 3 réplicas cada). Em memória, 15 réplicas com request de 256Mi somam
+3,75 GiB entre 3 nós de 4 GiB. Dimensionamento: desired 3, min 2, max 4 (`variables.tf`), dentro do
+limite da conta (até `large`, 9 instâncias, 32 vCPU).
 
 **Sem Dockerfile.** A orientação oficial da fase é incluir `Dockerfile` só onde for tecnicamente
-necessário; este repositório é só Terraform — provisiona o cluster, a rede, o API Gateway e o
-repositório ECR, mas não empacota nem builda imagem própria nenhuma. A imagem da aplicação é
-construída e publicada pela pipeline de `oficina-mecanica-app` contra o ECR provisionado aqui.
+necessário; este repositório é só Terraform — provisiona o cluster, a rede, o API Gateway e os
+repositórios ECR, mas não empacota nem builda imagem própria nenhuma. A imagem de cada serviço é
+construída e publicada pela pipeline do próprio serviço contra o ECR provisionado aqui.
 Decisão, não esquecimento.
 
 ## Custo estimado e ordem de destruição
@@ -267,9 +310,9 @@ e destruir — não manter no ar entre sessões. O que cobra por hora **mesmo co
 |---|---|---|
 | Control plane do EKS | ~US$ 0,10/h | Cobra desde a criação do cluster até o `destroy`, independente de haver nós ou não. |
 | NLB (Network Load Balancer) | ~US$ 0,0225/h + LCU | Cobra enquanto existir, mesmo sem tráfego. |
-| Node group (2× `t3.small`) | Instâncias EC2 On-Demand | Cobra por instância, mesmo ociosa. |
+| Node group (3× `t3.medium`) | Instâncias EC2 On-Demand | Cobra por instância, mesmo ociosa. |
 | API Gateway (HTTP API) | Por requisição | Não cobra parado, só por uso — não é uma preocupação de "esquecer ligado". |
-| Amazon ECR | ~US$ 0,10/GB/mês | Baixo; a `aws_ecr_lifecycle_policy` limita a 10 imagens para não crescer indefinidamente. |
+| Amazon ECR (5 repositórios) | ~US$ 0,10/GB/mês | Baixo; a `aws_ecr_lifecycle_policy` limita cada repositório a 10 imagens para não crescer indefinidamente. |
 | Secrets Manager (`aws_secretsmanager_secret.app`) | ~US$ 0,40/mês | Baixo, mas contínuo enquanto o secret existir. `recovery_window_in_days = 0` remove o secret imediatamente no `destroy`. |
 
 **Ordem de destruição:** `oficina-mecanica-infra-db` **antes** de `oficina-mecanica-infra-k8s` — na
@@ -309,13 +352,21 @@ laboratório ativa, confirmar:
   `plan` com mensagem clara se sobrar menos de 2 AZs elegíveis, mas só a conta real confirma se o
   allowlist evita a AZ sem capacidade
   para EKS nesta conta especificamente.
-- **Health check da NLB em `/healthz/live`** só fica saudável depois que a aplicação estiver de
-  fato implantada no cluster (pipeline de `oficina-mecanica-app`) — o `apply` deste repositório cria
-  a infraestrutura independente disso, mas o alvo só respondera 200 depois do deploy da app.
-- **Limite de 9 instâncias/32 vCPU da conta**: 2 nós `t3.small` (2 vCPU cada) ficam bem dentro do
-  limite; não testado contra o painel real da conta.
-- **Se o HPA consegue de fato escalar até 5 réplicas em nós `t3.small`** sem esbarrar em memória —
-  ver "Decisões de desenho"; se não conseguir, o próximo passo é trocar para `t3.medium`.
+- **Health check da NLB em `/healthz/live`** de cada target group só fica saudável depois que o
+  serviço correspondente estiver de fato implantado no cluster (pipeline do repositório do
+  serviço) — o `apply` deste repositório cria a infraestrutura independente disso, mas o alvo só
+  responderá 200 depois do deploy do serviço.
+- **Limite de 9 instâncias/32 vCPU da conta**: 3 a 4 nós `t3.medium` (2 vCPU cada, 8 vCPU no
+  máximo) ficam dentro do limite; não testado contra o painel real da conta.
+- **Se os 5 serviços com HPA no máximo (15 pods) mais o `nri-bundle` cabem em 3 nós `t3.medium`**
+  — a conta de pods e memória está em `node_instance_types` (`variables.tf`); só o cluster real
+  confirma.
+- **Reescrita de caminho das rotas técnicas.** `overwrite:path = "/$request.path.proxy"` segue o
+  que se relata na comunidade (re:Post) — o valor de `$request.path.proxy` vem sem a barra inicial,
+  por isso o prefixo `/`; a documentação oficial de parameter mapping lista a chave `overwrite:path`
+  mas não traz exemplo com `{proxy+}` nem diz se há barra inicial, nem se funciona em integração
+  `HTTP_PROXY` via VPC Link. Confirmar após o primeiro `apply` com
+  `GET <api_gateway_endpoint>/<serviço>/healthz/ready` (deve chegar ao pod como `/healthz/ready`).
 - **Nós em subnet pública (VPC default) recebendo IP público automaticamente** — esperado
   (`map_public_ip_on_launch` é o padrão de subnet pública), mas o comportamento efetivo de rede
   (por exemplo, se algum security group da conta interfere) só se confirma no `apply`.

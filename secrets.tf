@@ -24,9 +24,24 @@ resource "random_password" "admin_senha" {
   override_special = "!#%&*-_=+?"
 }
 
+resource "random_string" "mercadopago_client_id" {
+  # client_id do MOCK do Mercado Pago, hospedado pelo próprio serviço de pagamento: o serviço
+  # valida o token do mock contra este par de credenciais (não há integração real com o Mercado
+  # Pago). Alfanumérico, pelos mesmos motivos de escape do jwt_secret.
+  length  = 16
+  special = false
+}
+
+resource "random_password" "mercadopago_client_secret" {
+  # client_secret do mock do Mercado Pago (par do client_id acima). Sem caracteres especiais pelos
+  # mesmos motivos do jwt_secret.
+  length  = 32
+  special = false
+}
+
 resource "aws_secretsmanager_secret" "app" {
   name        = "oficina-mecanica/dev/app"
-  description = "Segredos da aplicacao oficina-mecanica-app: chave JWT compartilhada com a Lambda (ADR-001) e senha do login da oficina."
+  description = "Segredos da aplicacao oficina-mecanica: chave JWT compartilhada com a Lambda (ADR-001), senha do login da oficina e credenciais do mock do Mercado Pago."
 
   # Ambiente descartável (RFC-002 §6.3): permite recriar o secret sem esperar a janela de recovery
   # padrão (7-30 dias) se o ambiente for destruído e reaplicado na mesma sessão de laboratório.
@@ -44,5 +59,8 @@ resource "aws_secretsmanager_secret_version" "app" {
   secret_string = jsonencode({
     jwt_secret  = random_password.jwt_secret.result
     admin_senha = random_password.admin_senha.result
+
+    mercadopago_client_id     = random_string.mercadopago_client_id.result
+    mercadopago_client_secret = random_password.mercadopago_client_secret.result
   })
 }
