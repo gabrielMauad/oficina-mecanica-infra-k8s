@@ -56,37 +56,66 @@ variable "node_instance_types" {
     Tipos de instância do node group. Limite da conta AWS Academy: até 'large', 32 vCPU e 9
     instâncias por região (RFC-002 §6.2).
 
-    't3.small', não 't3.micro'/'t3.nano': o fator limitante não é CPU, é o limite de pods por nó
-    do EKS (derivado do número de ENIs/IPs da instância) — 't3.micro' suporta só 4 pods, e os pods
-    de sistema (kube-proxy, coredns, metrics-server, aws-node) já consomem isso. 't3.small' suporta
-    11; com 2 nós são ~22 slots, menos ~6 de sistema = ~16 livres, suficiente para o HPA escalar até
-    5 réplicas (k8s/app/22-api-hpa.yaml).
-
-    Se o HPA não conseguir escalar até 5 réplicas por falta de memória (não de slots de pod — é o
-    limite mais apertado aqui), o próximo degrau é 't3.medium'.
+    't3.medium' (2 vCPU, 4 GiB): o fator limitante é o limite de pods por nó do EKS (derivado do
+    número de ENIs/IPs da instância) e a memória. 't3.medium' suporta 17 pods por nó. Conta de
+    pods com 3 nós: 51 slots, menos os pods de sistema (aws-node e kube-proxy em cada nó, coredns,
+    metrics-server) e os do 'nri-bundle' (New Relic), sobram bem mais que os 15 pods que os 5
+    serviços ocupam no pico (HPA com máximo de 3 réplicas por serviço). Em memória, 15 réplicas
+    com request de 256Mi somam 3,75 GiB, distribuídos entre 3 nós de 4 GiB; em CPU, 15 × 100m =
+    1,5 vCPU de 6 vCPU.
   EOT
   type        = list(string)
-  default     = ["t3.small"]
+  default     = ["t3.medium"]
 }
 
 variable "node_group_desired_size" {
-  description = "Quantidade desejada de nós. 2 nós é suficiente para demonstrar o HPA, que escala pods (1 a 5), não nós."
+  description = "Quantidade desejada de nós. 3 nós acomodam os 5 serviços com as réplicas do HPA (1 a 3 por serviço) mais os pods de sistema e o nri-bundle; ver node_instance_types."
+  type        = number
+  default     = 3
+}
+
+variable "node_group_min_size" {
+  description = "Mínimo de nós do node group."
   type        = number
   default     = 2
 }
 
-variable "node_group_min_size" {
-  type    = number
-  default = 2
-}
-
 variable "node_group_max_size" {
-  type    = number
-  default = 3
+  description = "Máximo de nós do node group (a conta permite até 9 instâncias e 32 vCPU)."
+  type        = number
+  default     = 4
 }
 
-variable "app_node_port" {
-  description = "NodePort do Service da aplicação (k8s/app/21-api-service.yaml no repositório oficina-mecanica-app), alvo da NLB interna."
-  type        = number
-  default     = 30080
+variable "servicos" {
+  description = <<-EOT
+    Mapa serviço -> NodePort do Service do serviço no cluster. É a fonte única da qual derivam,
+    via for_each, o repositório ECR (oficina-mecanica-<serviço>), o listener e o target group da
+    NLB (listener TCP na mesma porta do NodePort), as integrações do API Gateway e as regras de
+    security group (faixa de portas = menor e maior NodePort do mapa). A chave é também o nome do
+    Deployment/Service no namespace oficina-mecanica e o prefixo da rota técnica
+    /<serviço>/{proxy+} do API Gateway.
+  EOT
+  type        = map(number)
+  default = {
+    "ordens-servico" = 30080
+    autenticacao     = 30081
+    cadastro         = 30082
+    "pecas-insumos"  = 30083
+    pagamento        = 30084
+  }
+
+  validation {
+    condition     = length(distinct(values(var.servicos))) == length(var.servicos)
+    error_message = "Cada serviço precisa de um NodePort distinto."
+  }
+
+  validation {
+    condition     = alltrue([for porta in values(var.servicos) : porta >= 30000 && porta <= 32767])
+    error_message = "NodePorts do Kubernetes ficam na faixa 30000-32767."
+  }
+
+  validation {
+    condition     = contains(keys(var.servicos), "ordens-servico")
+    error_message = "O serviço ordens-servico é o destino da rota padrão (ANY /{proxy+}) e precisa existir no mapa."
+  }
 }

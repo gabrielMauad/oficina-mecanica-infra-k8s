@@ -60,8 +60,8 @@ resource "aws_eks_node_group" "this" {
   depends_on = [aws_eks_cluster.this]
 }
 
-# metrics-server é o único add-on declarado: é pré-requisito do HPA já usado em
-# k8s/app/22-api-hpa.yaml (repositório oficina-mecanica-app), e o HPA é requisito da fase
+# metrics-server é o único add-on declarado: é pré-requisito do HPA de cada serviço (manifestos
+# nos repositórios dos serviços), e o HPA é requisito da fase
 # (escalabilidade). vpc-cni, kube-proxy e coredns NÃO são declarados aqui — o EKS já os instala
 # automaticamente na criação do cluster; fixá-los via aws_eks_addon só serve para travar versão,
 # o que aqui é apenas mais três pontos de falha no apply sem benefício.
