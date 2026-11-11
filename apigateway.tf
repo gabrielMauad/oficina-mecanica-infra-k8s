@@ -97,8 +97,9 @@ resource "aws_apigatewayv2_integration" "servico" {
 }
 
 # Integração técnica, para a rota /<serviço>/{proxy+}: reescreve o caminho removendo o prefixo do
-# serviço, de modo que GET /cadastro/healthz/ready chegue ao pod como GET /healthz/ready. O
-# $request.path.proxy vem sem a barra inicial, por isso ela é acrescentada no valor.
+# serviço, de modo que GET /cadastro/healthz/ready chegue ao pod como GET /healthz/ready. Assume-se
+# que $request.path.proxy vem sem a barra inicial, por isso ela é acrescentada no valor; se o pod
+# receber //healthz/ready, usar "$request.path.proxy" sem a barra (ver README).
 resource "aws_apigatewayv2_integration" "servico_reescrita" {
   for_each = var.servicos
 
@@ -136,6 +137,19 @@ resource "aws_apigatewayv2_route" "padrao" {
   api_id    = aws_apigatewayv2_api.this.id
   route_key = "ANY /{proxy+}"
   target    = "integrations/${aws_apigatewayv2_integration.servico[local.servico_padrao].id}"
+}
+
+# Os recursos abaixo já existiam com outro endereço (antes de a integração e a rota padrão serem
+# parametrizadas por serviço). O moved preserva a identidade na state e evita destruir e recriar a
+# rota ANY /{proxy+}, o que poderia falhar por conflito de route_key na mesma API.
+moved {
+  from = aws_apigatewayv2_integration.app
+  to   = aws_apigatewayv2_integration.servico["ordens-servico"]
+}
+
+moved {
+  from = aws_apigatewayv2_route.app
+  to   = aws_apigatewayv2_route.padrao
 }
 
 resource "aws_apigatewayv2_stage" "default" {

@@ -92,7 +92,7 @@ listener do serviço dono.
 segunda integração com `request_parameters = { "overwrite:path" = "/$request.path.proxy" }`, de modo
 que `GET /cadastro/healthz/ready` chegue ao pod como `GET /healthz/ready`. Servem aos smoke tests das
 pipelines e ao acesso ao `/openapi/v1.json` de cada serviço. As rotas `/mock/mercadopago/*` do
-serviço de pagamento **não** são expostas.
+serviço de pagamento não têm rota própria, mas a rota técnica `ANY /pagamento/{proxy+}` também as alcança; elas exigem as credenciais do mock e Bearer, e o bloqueio por origem fica como evolução futura.
 
 ## Diagrama do componente
 
@@ -361,12 +361,13 @@ laboratório ativa, confirmar:
 - **Se os 5 serviços com HPA no máximo (15 pods) mais o `nri-bundle` cabem em 3 nós `t3.medium`**
   — a conta de pods e memória está em `node_instance_types` (`variables.tf`); só o cluster real
   confirma.
-- **Reescrita de caminho das rotas técnicas.** `overwrite:path = "/$request.path.proxy"` segue o
-  que se relata na comunidade (re:Post) — o valor de `$request.path.proxy` vem sem a barra inicial,
-  por isso o prefixo `/`; a documentação oficial de parameter mapping lista a chave `overwrite:path`
-  mas não traz exemplo com `{proxy+}` nem diz se há barra inicial, nem se funciona em integração
-  `HTTP_PROXY` via VPC Link. Confirmar após o primeiro `apply` com
-  `GET <api_gateway_endpoint>/<serviço>/healthz/ready` (deve chegar ao pod como `/healthz/ready`).
+- **Reescrita de caminho das rotas técnicas.** A documentação de integrações privadas do HTTP API
+  (VPC Link) recomenda usar o parameter mapping `overwrite:path` para controlar o caminho enviado ao
+  backend, e é isso que `overwrite:path = "/$request.path.proxy"` faz. O que a documentação não
+  esclarece é o valor de `$request.path.proxy` em rota greedy (`{proxy+}`), isto é, se ele vem com
+  barra inicial; assume-se que vem sem, por isso o prefixo `/`. Confirmar após o primeiro `apply` com
+  `GET <api_gateway_endpoint>/cadastro/healthz/ready` (deve chegar ao pod como `/healthz/ready`).
+  Se o pod receber `//healthz/ready` (404), trocar o valor para `"$request.path.proxy"`, sem a barra.
 - **Nós em subnet pública (VPC default) recebendo IP público automaticamente** — esperado
   (`map_public_ip_on_launch` é o padrão de subnet pública), mas o comportamento efetivo de rede
   (por exemplo, se algum security group da conta interfere) só se confirma no `apply`.
