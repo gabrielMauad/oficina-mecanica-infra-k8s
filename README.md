@@ -252,6 +252,17 @@ serviços** — os Services continuam `NodePort`. As regras de security group us
 Lambda de autenticação por CPF, que roda na VPC e chama o cadastro direto na NLB (porta 30082).
 É o caminho mais simples que funciona.
 
+**Launch template mínimo no node group, só para o hop limit do IMDSv2.** Sem IRSA nesta conta, os
+pods dos serviços (MassTransit sobre SNS/SQS, DynamoDB) usam as credenciais da role dos nós
+(`LabRole`) via IMDS. Em node groups gerenciados com Amazon Linux 2023 (AMI padrão a partir do
+Kubernetes 1.30) sem launch template, o hop limit do IMDSv2 é 1 e os containers não alcançam essas
+credenciais; a documentação do EKS indica um launch template com `HttpPutResponseHopLimit` maior. O
+`aws_launch_template.nodes` (`eks.tf`) define apenas `metadata_options` (IMDSv2 obrigatório, hop
+limit 2): imagem, tipo de instância, instance profile, subnets e user data continuam sob controle
+do node group gerenciado. Acrescentar um launch template a um node group existente o recria (o
+`launch_template.id` é `ForceNew`), com o mesmo nome; como o ambiente costuma ser recriado do zero,
+não foi usado `node_group_name_prefix`/`create_before_destroy`.
+
 **Só o add-on `metrics-server` é declarado (`aws_eks_addon`), não Helm.** É pré-requisito do HPA
 (escalabilidade é requisito da fase). Declará-lo evita configurar os providers `kubernetes`/`helm`
 com autenticação do cluster só para isso — o que, além de mais uma peça, teria uma dependência de
@@ -352,6 +363,9 @@ laboratório ativa, confirmar:
   `plan` com mensagem clara se sobrar menos de 2 AZs elegíveis, mas só a conta real confirma se o
   allowlist evita a AZ sem capacidade
   para EKS nesta conta especificamente.
+- **Se `LabRole` permite `ec2:CreateLaunchTemplate`** (necessário para `aws_launch_template.nodes`) e
+  se o node group, ao ser criado com o launch template, entrega o hop limit 2 aos nós — só o
+  `apply` na conta real confirma; as políticas da `LabRole` não estão documentadas aqui.
 - **Health check da NLB em `/healthz/live`** de cada target group só fica saudável depois que o
   serviço correspondente estiver de fato implantado no cluster (pipeline do repositório do
   serviço) — o `apply` deste repositório cria a infraestrutura independente disso, mas o alvo só

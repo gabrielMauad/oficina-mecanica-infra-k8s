@@ -38,12 +38,40 @@ resource "aws_eks_cluster" "this" {
   }
 }
 
+# Launch template mínimo, só para ajustar as opções de metadata das instâncias. Os pods dos serviços
+# (MassTransit sobre SNS/SQS, DynamoDB) usam as credenciais da role dos nós (LabRole) via IMDS, já que
+# esta conta não permite IRSA. No Amazon Linux 2023 (AMI padrão de node groups gerenciados a partir do
+# Kubernetes 1.30) o hop limit do IMDSv2 é 1 quando não há launch template, e com isso os containers
+# não alcançam as credenciais do nó (documentação do EKS, "Upgrade from Amazon Linux 2 to Amazon
+# Linux 2023"). Hop limit 2 permite o salto extra da rede do container.
+#
+# Propositalmente NÃO define image_id, tipo de instância, instance profile, subnets nem user data:
+# o node group gerenciado continua dono deles (instance_types fica no aws_eks_node_group).
+resource "aws_launch_template" "nodes" {
+  name_prefix = "${var.cluster_name}-nodes-"
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+
+  tags = {
+    Name = "${var.cluster_name}-nodes"
+  }
+}
+
 resource "aws_eks_node_group" "this" {
   cluster_name    = aws_eks_cluster.this.name
   node_group_name = "${var.cluster_name}-nodes"
   node_role_arn   = data.aws_iam_role.eks.arn
   subnet_ids      = local.subnet_ids
   instance_types  = var.node_instance_types
+
+  launch_template {
+    id      = aws_launch_template.nodes.id
+    version = aws_launch_template.nodes.latest_version
+  }
 
   scaling_config {
     desired_size = var.node_group_desired_size
